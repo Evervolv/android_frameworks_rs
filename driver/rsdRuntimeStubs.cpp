@@ -23,10 +23,13 @@
 
 #include "utils/Timers.h"
 #include "rsdCore.h"
+#include "rsdBcc.h"
 
 #include "rsdRuntime.h"
 #include "rsdPath.h"
 #include "rsdAllocation.h"
+#include "rsdShaderCache.h"
+#include "rsdVertexArray.h"
 
 #include <time.h>
 
@@ -38,6 +41,33 @@ using namespace android::renderscript;
     Context * rsc = tls->mContext; \
     ScriptC * sc = (ScriptC *) tls->mScript
 
+typedef float float2 __attribute__((ext_vector_type(2)));
+typedef float float3 __attribute__((ext_vector_type(3)));
+typedef float float4 __attribute__((ext_vector_type(4)));
+typedef char char2 __attribute__((ext_vector_type(2)));
+typedef char char3 __attribute__((ext_vector_type(3)));
+typedef char char4 __attribute__((ext_vector_type(4)));
+typedef unsigned char uchar2 __attribute__((ext_vector_type(2)));
+typedef unsigned char uchar3 __attribute__((ext_vector_type(3)));
+typedef unsigned char uchar4 __attribute__((ext_vector_type(4)));
+typedef short short2 __attribute__((ext_vector_type(2)));
+typedef short short3 __attribute__((ext_vector_type(3)));
+typedef short short4 __attribute__((ext_vector_type(4)));
+typedef unsigned short ushort2 __attribute__((ext_vector_type(2)));
+typedef unsigned short ushort3 __attribute__((ext_vector_type(3)));
+typedef unsigned short ushort4 __attribute__((ext_vector_type(4)));
+typedef int32_t int2 __attribute__((ext_vector_type(2)));
+typedef int32_t int3 __attribute__((ext_vector_type(3)));
+typedef int32_t int4 __attribute__((ext_vector_type(4)));
+typedef uint32_t uint2 __attribute__((ext_vector_type(2)));
+typedef uint32_t uint3 __attribute__((ext_vector_type(3)));
+typedef uint32_t uint4 __attribute__((ext_vector_type(4)));
+typedef long long long2 __attribute__((ext_vector_type(2)));
+typedef long long long3 __attribute__((ext_vector_type(3)));
+typedef long long long4 __attribute__((ext_vector_type(4)));
+typedef unsigned long long ulong2 __attribute__((ext_vector_type(2)));
+typedef unsigned long long ulong3 __attribute__((ext_vector_type(3)));
+typedef unsigned long long ulong4 __attribute__((ext_vector_type(4)));
 
 
 //////////////////////////////////////////////////////////////////////////////
@@ -203,11 +233,33 @@ static void SC_DrawQuadTexCoords(float x1, float y1, float z1, float u1, float v
                                  float x3, float y3, float z3, float u3, float v3,
                                  float x4, float y4, float z4, float u4, float v4) {
     GET_TLS();
-    rsrDrawQuadTexCoords(rsc, sc,
-                         x1, y1, z1, u1, v1,
-                         x2, y2, z2, u2, v2,
-                         x3, y3, z3, u3, v3,
-                         x4, y4, z4, u4, v4);
+
+    if (!rsc->setupCheck()) {
+        return;
+    }
+
+    RsdHal *dc = (RsdHal *)rsc->mHal.drv;
+    if (!dc->gl.shaderCache->setup(rsc)) {
+        return;
+    }
+
+    //ALOGE("Quad");
+    //ALOGE("%4.2f, %4.2f, %4.2f", x1, y1, z1);
+    //ALOGE("%4.2f, %4.2f, %4.2f", x2, y2, z2);
+    //ALOGE("%4.2f, %4.2f, %4.2f", x3, y3, z3);
+    //ALOGE("%4.2f, %4.2f, %4.2f", x4, y4, z4);
+
+    float vtx[] = {x1,y1,z1, x2,y2,z2, x3,y3,z3, x4,y4,z4};
+    const float tex[] = {u1,v1, u2,v2, u3,v3, u4,v4};
+
+    RsdVertexArray::Attrib attribs[2];
+    attribs[0].set(GL_FLOAT, 3, 12, false, (uint32_t)vtx, "ATTRIB_position");
+    attribs[1].set(GL_FLOAT, 2, 8, false, (uint32_t)tex, "ATTRIB_texture0");
+
+    RsdVertexArray va(attribs, 2);
+    va.setup(rsc);
+
+    RSD_CALL_GL(glDrawArrays, GL_TRIANGLE_FAN, 0, 4);
 }
 
 static void SC_DrawQuad(float x1, float y1, float z1,
@@ -215,17 +267,35 @@ static void SC_DrawQuad(float x1, float y1, float z1,
                         float x3, float y3, float z3,
                         float x4, float y4, float z4) {
     GET_TLS();
-    rsrDrawQuad(rsc, sc, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
+    SC_DrawQuadTexCoords(x1, y1, z1, 0, 1,
+                         x2, y2, z2, 1, 1,
+                         x3, y3, z3, 1, 0,
+                         x4, y4, z4, 0, 0);
 }
 
 static void SC_DrawSpriteScreenspace(float x, float y, float z, float w, float h) {
     GET_TLS();
-    rsrDrawSpriteScreenspace(rsc, sc, x, y, z, w, h);
+
+    ObjectBaseRef<const ProgramVertex> tmp(rsc->getProgramVertex());
+    rsc->setProgramVertex(rsc->getDefaultProgramVertex());
+    //rsc->setupCheck();
+
+    //GLint crop[4] = {0, h, w, -h};
+
+    float sh = rsc->getHeight();
+
+    SC_DrawQuad(x,   sh - y,     z,
+                x+w, sh - y,     z,
+                x+w, sh - (y+h), z,
+                x,   sh - (y+h), z);
+    rsc->setProgramVertex((ProgramVertex *)tmp.get());
 }
 
 static void SC_DrawRect(float x1, float y1, float x2, float y2, float z) {
     GET_TLS();
-    rsrDrawRect(rsc, sc, x1, y1, x2, y2, z);
+
+    SC_DrawQuad(x1, y2, z, x2, y2, z, x2, y1, z, x1, y1, z);
+
 }
 
 static void SC_DrawPath(Path *p) {
@@ -353,7 +423,7 @@ static bool SC_IsObject(const ObjectBase *src) {
 
 static const Allocation * SC_GetAllocation(const void *ptr) {
     GET_TLS();
-    return rsrGetAllocation(rsc, sc, ptr);
+    return rsdScriptGetAllocationForPointer(rsc, sc, ptr);
 }
 
 static void SC_ForEach_SAA(Script *target,
@@ -482,6 +552,15 @@ static void SC_debugFv3(const char *s, float f1, float f2, float f3) {
 static void SC_debugFv4(const char *s, float f1, float f2, float f3, float f4) {
     ALOGD("%s {%f, %f, %f, %f}", s, f1, f2, f3, f4);
 }
+static void SC_debugF2(const char *s, float2 f) {
+    ALOGD("%s {%f, %f}", s, f.x, f.y);
+}
+static void SC_debugF3(const char *s, float3 f) {
+    ALOGD("%s {%f, %f, %f}", s, f.x, f.y, f.z);
+}
+static void SC_debugF4(const char *s, float4 f) {
+    ALOGD("%s {%f, %f, %f, %f}", s, f.x, f.y, f.z, f.w);
+}
 static void SC_debugD(const char *s, double d) {
     ALOGD("%s %f, 0x%08llx", s, d, *((long long *) (&d)));
 }
@@ -500,20 +579,102 @@ static void SC_debugFM2v2(const char *s, const float *f) {
     ALOGD("%s {%f, %f", s, f[0], f[2]);
     ALOGD("%s  %f, %f}",s, f[1], f[3]);
 }
-
+static void SC_debugI8(const char *s, char c) {
+    ALOGD("%s %hhd  0x%hhx", s, c, (unsigned char)c);
+}
+static void SC_debugC2(const char *s, char2 c) {
+    ALOGD("%s {%hhd, %hhd}  0x%hhx 0x%hhx", s, c.x, c.y, (unsigned char)c.x, (unsigned char)c.y);
+}
+static void SC_debugC3(const char *s, char3 c) {
+    ALOGD("%s {%hhd, %hhd, %hhd}  0x%hhx 0x%hhx 0x%hhx", s, c.x, c.y, c.z, (unsigned char)c.x, (unsigned char)c.y, (unsigned char)c.z);
+}
+static void SC_debugC4(const char *s, char4 c) {
+    ALOGD("%s {%hhd, %hhd, %hhd, %hhd}  0x%hhx 0x%hhx 0x%hhx 0x%hhx", s, c.x, c.y, c.z, c.w, (unsigned char)c.x, (unsigned char)c.y, (unsigned char)c.z, (unsigned char)c.w);
+}
+static void SC_debugU8(const char *s, unsigned char c) {
+    ALOGD("%s %hhu  0x%hhx", s, c, c);
+}
+static void SC_debugUC2(const char *s, uchar2 c) {
+    ALOGD("%s {%hhu, %hhu}  0x%hhx 0x%hhx", s, c.x, c.y, c.x, c.y);
+}
+static void SC_debugUC3(const char *s, uchar3 c) {
+    ALOGD("%s {%hhu, %hhu, %hhu}  0x%hhx 0x%hhx 0x%hhx", s, c.x, c.y, c.z, c.x, c.y, c.z);
+}
+static void SC_debugUC4(const char *s, uchar4 c) {
+    ALOGD("%s {%hhu, %hhu, %hhu, %hhu}  0x%hhx 0x%hhx 0x%hhx 0x%hhx", s, c.x, c.y, c.z, c.w, c.x, c.y, c.z, c.w);
+}
+static void SC_debugI16(const char *s, short c) {
+    ALOGD("%s %hd  0x%hx", s, c, c);
+}
+static void SC_debugS2(const char *s, short2 c) {
+    ALOGD("%s {%hd, %hd}  0x%hx 0x%hx", s, c.x, c.y, c.x, c.y);
+}
+static void SC_debugS3(const char *s, short3 c) {
+    ALOGD("%s {%hd, %hd, %hd}  0x%hx 0x%hx 0x%hx", s, c.x, c.y, c.z, c.x, c.y, c.z);
+}
+static void SC_debugS4(const char *s, short4 c) {
+    ALOGD("%s {%hd, %hd, %hd, %hd}  0x%hx 0x%hx 0x%hx 0x%hx", s, c.x, c.y, c.z, c.w, c.x, c.y, c.z, c.w);
+}
+static void SC_debugU16(const char *s, unsigned short c) {
+    ALOGD("%s %hu  0x%hx", s, c, c);
+}
+static void SC_debugUS2(const char *s, ushort2 c) {
+    ALOGD("%s {%hu, %hu}  0x%hx 0x%hx", s, c.x, c.y, c.x, c.y);
+}
+static void SC_debugUS3(const char *s, ushort3 c) {
+    ALOGD("%s {%hu, %hu, %hu}  0x%hx 0x%hx 0x%hx", s, c.x, c.y, c.z, c.x, c.y, c.z);
+}
+static void SC_debugUS4(const char *s, ushort4 c) {
+    ALOGD("%s {%hu, %hu, %hu, %hu}  0x%hx 0x%hx 0x%hx 0x%hx", s, c.x, c.y, c.z, c.w, c.x, c.y, c.z, c.w);
+}
 static void SC_debugI32(const char *s, int32_t i) {
-    ALOGD("%s %i  0x%x", s, i, i);
+    ALOGD("%s %d  0x%x", s, i, i);
+}
+static void SC_debugI2(const char *s, int2 i) {
+    ALOGD("%s {%d, %d}  0x%x 0x%x", s, i.x, i.y, i.x, i.y);
+}
+static void SC_debugI3(const char *s, int3 i) {
+    ALOGD("%s {%d, %d, %d}  0x%x 0x%x 0x%x", s, i.x, i.y, i.z, i.x, i.y, i.z);
+}
+static void SC_debugI4(const char *s, int4 i) {
+    ALOGD("%s {%d, %d, %d, %d}  0x%x 0x%x 0x%x 0x%x", s, i.x, i.y, i.z, i.w, i.x, i.y, i.z, i.w);
 }
 static void SC_debugU32(const char *s, uint32_t i) {
     ALOGD("%s %u  0x%x", s, i, i);
 }
+static void SC_debugUI2(const char *s, uint2 i) {
+    ALOGD("%s {%u, %u}  0x%x 0x%x", s, i.x, i.y, i.x, i.y);
+}
+static void SC_debugUI3(const char *s, uint3 i) {
+    ALOGD("%s {%u, %u, %u}  0x%x 0x%x 0x%x", s, i.x, i.y, i.z, i.x, i.y, i.z);
+}
+static void SC_debugUI4(const char *s, uint4 i) {
+    ALOGD("%s {%u, %u, %u, %u}  0x%x 0x%x 0x%x 0x%x", s, i.x, i.y, i.z, i.w, i.x, i.y, i.z, i.w);
+}
 static void SC_debugLL64(const char *s, long long ll) {
     ALOGD("%s %lld  0x%llx", s, ll, ll);
+}
+static void SC_debugL2(const char *s, long2 ll) {
+    ALOGD("%s {%lld, %lld}  0x%llx 0x%llx", s, ll.x, ll.y, ll.x, ll.y);
+}
+static void SC_debugL3(const char *s, long3 ll) {
+    ALOGD("%s {%lld, %lld, %lld}  0x%llx 0x%llx 0x%llx", s, ll.x, ll.y, ll.z, ll.x, ll.y, ll.z);
+}
+static void SC_debugL4(const char *s, long4 ll) {
+    ALOGD("%s {%lld, %lld, %lld, %lld}  0x%llx 0x%llx 0x%llx 0x%llx", s, ll.x, ll.y, ll.z, ll.w, ll.x, ll.y, ll.z, ll.w);
 }
 static void SC_debugULL64(const char *s, unsigned long long ll) {
     ALOGD("%s %llu  0x%llx", s, ll, ll);
 }
-
+static void SC_debugUL2(const char *s, ulong2 ll) {
+    ALOGD("%s {%llu, %llu}  0x%llx 0x%llx", s, ll.x, ll.y, ll.x, ll.y);
+}
+static void SC_debugUL3(const char *s, ulong3 ll) {
+    ALOGD("%s {%llu, %llu, %llu}  0x%llx 0x%llx 0x%llx", s, ll.x, ll.y, ll.z, ll.x, ll.y, ll.z);
+}
+static void SC_debugUL4(const char *s, ulong4 ll) {
+    ALOGD("%s {%llu, %llu, %llu, %llu}  0x%llx 0x%llx 0x%llx 0x%llx", s, ll.x, ll.y, ll.z, ll.w, ll.x, ll.y, ll.z, ll.w);
+}
 static void SC_debugP(const char *s, const void *p) {
     ALOGD("%s %p", s, p);
 }
@@ -663,9 +824,9 @@ static RsdSymbolTable gSyms[] = {
 
     { "_Z9rsForEach9rs_script13rs_allocationS0_", (void *)&SC_ForEach_SAA, true },
     { "_Z9rsForEach9rs_script13rs_allocationS0_PKv", (void *)&SC_ForEach_SAAU, true },
-    { "_Z9rsForEach9rs_script13rs_allocationS0_PKvPK16rs_script_call_t", (void *)&SC_ForEach_SAAUS, true },
+    { "_Z9rsForEach9rs_script13rs_allocationS0_PKvPK14rs_script_call", (void *)&SC_ForEach_SAAUS, true },
     { "_Z9rsForEach9rs_script13rs_allocationS0_PKvj", (void *)&SC_ForEach_SAAUL, true },
-    { "_Z9rsForEach9rs_script13rs_allocationS0_PKvjPK16rs_script_call_t", (void *)&SC_ForEach_SAAULS, true },
+    { "_Z9rsForEach9rs_script13rs_allocationS0_PKvjPK14rs_script_call", (void *)&SC_ForEach_SAAULS, true },
 
     // time
     { "_Z6rsTimePi", (void *)&SC_Time, true },
@@ -683,19 +844,56 @@ static RsdSymbolTable gSyms[] = {
     { "_Z7rsDebugPKcff", (void *)&SC_debugFv2, true },
     { "_Z7rsDebugPKcfff", (void *)&SC_debugFv3, true },
     { "_Z7rsDebugPKcffff", (void *)&SC_debugFv4, true },
+    { "_Z7rsDebugPKcDv2_f", (void *)&SC_debugF2, true },
+    { "_Z7rsDebugPKcDv3_f", (void *)&SC_debugF3, true },
+    { "_Z7rsDebugPKcDv4_f", (void *)&SC_debugF4, true },
     { "_Z7rsDebugPKcd", (void *)&SC_debugD, true },
     { "_Z7rsDebugPKcPK12rs_matrix4x4", (void *)&SC_debugFM4v4, true },
     { "_Z7rsDebugPKcPK12rs_matrix3x3", (void *)&SC_debugFM3v3, true },
     { "_Z7rsDebugPKcPK12rs_matrix2x2", (void *)&SC_debugFM2v2, true },
+    { "_Z7rsDebugPKcc", (void *)&SC_debugI8, true },
+    { "_Z7rsDebugPKcDv2_c", (void *)&SC_debugC2, true },
+    { "_Z7rsDebugPKcDv3_c", (void *)&SC_debugC3, true },
+    { "_Z7rsDebugPKcDv4_c", (void *)&SC_debugC4, true },
+    { "_Z7rsDebugPKch", (void *)&SC_debugU8, true },
+    { "_Z7rsDebugPKcDv2_h", (void *)&SC_debugUC2, true },
+    { "_Z7rsDebugPKcDv3_h", (void *)&SC_debugUC3, true },
+    { "_Z7rsDebugPKcDv4_h", (void *)&SC_debugUC4, true },
+    { "_Z7rsDebugPKcs", (void *)&SC_debugI16, true },
+    { "_Z7rsDebugPKcDv2_s", (void *)&SC_debugS2, true },
+    { "_Z7rsDebugPKcDv3_s", (void *)&SC_debugS3, true },
+    { "_Z7rsDebugPKcDv4_s", (void *)&SC_debugS4, true },
+    { "_Z7rsDebugPKct", (void *)&SC_debugU16, true },
+    { "_Z7rsDebugPKcDv2_t", (void *)&SC_debugUS2, true },
+    { "_Z7rsDebugPKcDv3_t", (void *)&SC_debugUS3, true },
+    { "_Z7rsDebugPKcDv4_t", (void *)&SC_debugUS4, true },
     { "_Z7rsDebugPKci", (void *)&SC_debugI32, true },
+    { "_Z7rsDebugPKcDv2_i", (void *)&SC_debugI2, true },
+    { "_Z7rsDebugPKcDv3_i", (void *)&SC_debugI3, true },
+    { "_Z7rsDebugPKcDv4_i", (void *)&SC_debugI4, true },
     { "_Z7rsDebugPKcj", (void *)&SC_debugU32, true },
+    { "_Z7rsDebugPKcDv2_j", (void *)&SC_debugUI2, true },
+    { "_Z7rsDebugPKcDv3_j", (void *)&SC_debugUI3, true },
+    { "_Z7rsDebugPKcDv4_j", (void *)&SC_debugUI4, true },
     // Both "long" and "unsigned long" need to be redirected to their
     // 64-bit counterparts, since we have hacked Slang to use 64-bit
     // for "long" on Arm (to be similar to Java).
     { "_Z7rsDebugPKcl", (void *)&SC_debugLL64, true },
+    { "_Z7rsDebugPKcDv2_l", (void *)&SC_debugL2, true },
+    { "_Z7rsDebugPKcDv3_l", (void *)&SC_debugL3, true },
+    { "_Z7rsDebugPKcDv4_l", (void *)&SC_debugL4, true },
     { "_Z7rsDebugPKcm", (void *)&SC_debugULL64, true },
+    { "_Z7rsDebugPKcDv2_m", (void *)&SC_debugUL2, true },
+    { "_Z7rsDebugPKcDv3_m", (void *)&SC_debugUL3, true },
+    { "_Z7rsDebugPKcDv4_m", (void *)&SC_debugUL4, true },
     { "_Z7rsDebugPKcx", (void *)&SC_debugLL64, true },
+    { "_Z7rsDebugPKcDv2_x", (void *)&SC_debugL2, true },
+    { "_Z7rsDebugPKcDv3_x", (void *)&SC_debugL3, true },
+    { "_Z7rsDebugPKcDv4_x", (void *)&SC_debugL4, true },
     { "_Z7rsDebugPKcy", (void *)&SC_debugULL64, true },
+    { "_Z7rsDebugPKcDv2_y", (void *)&SC_debugUL2, true },
+    { "_Z7rsDebugPKcDv3_y", (void *)&SC_debugUL3, true },
+    { "_Z7rsDebugPKcDv4_y", (void *)&SC_debugUL4, true },
     { "_Z7rsDebugPKcPKv", (void *)&SC_debugP, true },
 
     { NULL, NULL, false }
@@ -704,13 +902,6 @@ static RsdSymbolTable gSyms[] = {
 
 void* rsdLookupRuntimeStub(void* pContext, char const* name) {
     ScriptC *s = (ScriptC *)pContext;
-    if (!strcmp(name, "__isThreadable")) {
-      return (void*) s->mHal.info.isThreadable;
-    } else if (!strcmp(name, "__clearThreadable")) {
-      s->mHal.info.isThreadable = false;
-      return NULL;
-    }
-
     RsdSymbolTable *syms = gSyms;
     const RsdSymbolTable *sym = rsdLookupSymbolMath(name);
 

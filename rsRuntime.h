@@ -57,19 +57,6 @@ void rsrVpGetProjectionMatrix(Context *, Script *, rsc_Matrix *m);
 // Drawing
 //////////////////////////////////////////////////////////////////////////////
 
-void rsrDrawQuadTexCoords(Context *, Script *,
-                          float x1, float y1, float z1, float u1, float v1,
-                          float x2, float y2, float z2, float u2, float v2,
-                          float x3, float y3, float z3, float u3, float v3,
-                          float x4, float y4, float z4, float u4, float v4);
-void rsrDrawQuad(Context *, Script *,
-                 float x1, float y1, float z1,
-                 float x2, float y2, float z2,
-                 float x3, float y3, float z3,
-                 float x4, float y4, float z4);
-void rsrDrawSpriteScreenspace(Context *, Script *,
-                              float x, float y, float z, float w, float h);
-void rsrDrawRect(Context *, Script *, float x1, float y1, float x2, float y2, float z);
 void rsrDrawPath(Context *, Script *, Path *);
 void rsrDrawMesh(Context *, Script *, Mesh *);
 void rsrDrawMeshPrimitive(Context *, Script *, Mesh *, uint32_t primIndex);
@@ -149,7 +136,6 @@ void rsrAllocationDecRefs(const Context *, const Allocation *, void *ptr,
 
 uint32_t rsrToClient(Context *, Script *, int cmdID, void *data, int len);
 uint32_t rsrToClientBlocking(Context *, Script *, int cmdID, void *data, int len);
-const Allocation * rsrGetAllocation(Context *, Script *, const void *ptr);
 
 void rsrAllocationMarkDirty(Context *, Script *, RsAllocation a);
 void rsrAllocationSyncAll(Context *, Script *, Allocation *a, RsAllocationUsageType source);

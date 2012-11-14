@@ -38,10 +38,6 @@ public:
     ScriptC(Context *);
     virtual ~ScriptC();
 
-
-    const Allocation *ptrToAllocation(const void *) const;
-
-
     virtual void Invoke(Context *rsc, uint32_t slot, const void *data, size_t len);
 
     virtual uint32_t run(Context *);
@@ -54,7 +50,7 @@ public:
                             size_t usrBytes,
                             const RsScriptCall *sc = NULL);
 
-    virtual void serialize(OStream *stream) const {    }
+    virtual void serialize(Context *rsc, OStream *stream) const {    }
     virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_SCRIPT_C; }
     static Type *createFromStream(Context *rsc, IStream *stream) { return NULL; }
 
@@ -69,6 +65,7 @@ public:
 #ifndef ANDROID_RS_SERIALIZE
     bcinfo::BitcodeTranslator *BT;
 #endif
+    bool createCacheDir(const char *cacheDir);
 };
 
 class ScriptCState {

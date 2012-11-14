@@ -40,6 +40,10 @@ typedef void * RsFile;
 typedef void * RsFont;
 typedef void * RsSampler;
 typedef void * RsScript;
+typedef void * RsScriptKernelID;
+typedef void * RsScriptFieldID;
+typedef void * RsScriptMethodID;
+typedef void * RsScriptGroup;
 typedef void * RsMesh;
 typedef void * RsPath;
 typedef void * RsType;
@@ -323,7 +327,11 @@ enum RsA3DClassID {
     RS_A3D_CLASS_ID_ANIMATION,
     RS_A3D_CLASS_ID_ADAPTER_1D,
     RS_A3D_CLASS_ID_ADAPTER_2D,
-    RS_A3D_CLASS_ID_SCRIPT_C
+    RS_A3D_CLASS_ID_SCRIPT_C,
+    RS_A3D_CLASS_ID_SCRIPT_KERNEL_ID,
+    RS_A3D_CLASS_ID_SCRIPT_FIELD_ID,
+    RS_A3D_CLASS_ID_SCRIPT_METHOD_ID,
+    RS_A3D_CLASS_ID_SCRIPT_GROUP
 };
 
 enum RsCullMode {
@@ -333,13 +341,34 @@ enum RsCullMode {
     RS_CULL_INVALID = 100,
 };
 
+enum RsScriptIntrinsicID {
+    RS_SCRIPT_INTRINSIC_ID_UNDEFINED = 0,
+    RS_SCRIPT_INTRINSIC_ID_CONVOLVE_3x3 = 1,
+    RS_SCRIPT_INTRINSIC_ID_COLOR_MATRIX = 2,
+    RS_SCRIPT_INTRINSIC_ID_LUT = 3,
+    RS_SCRIPT_INTRINSIC_ID_CONVOLVE_5x5 = 4,
+    RS_SCRIPT_INTRINSIC_ID_BLUR = 5,
+    RS_SCRIPT_INTRINSIC_ID_YUV_TO_RGB = 6,
+    RS_SCRIPT_INTRINSIC_ID_BLEND = 7
+};
+
 typedef struct {
     RsA3DClassID classID;
     const char* objectName;
 } RsFileIndexEntry;
 
+enum RsForEachStrategy {
+    RS_FOR_EACH_STRATEGY_SERIAL = 0,
+    RS_FOR_EACH_STRATEGY_DONT_CARE = 1,
+    RS_FOR_EACH_STRATEGY_DST_LINEAR = 2,
+    RS_FOR_EACH_STRATEGY_TILE_SMALL = 3,
+    RS_FOR_EACH_STRATEGY_TILE_MEDIUM = 4,
+    RS_FOR_EACH_STRATEGY_TILE_LARGE = 5
+};
+
 // Script to Script
 typedef struct {
+    enum RsForEachStrategy strategy;
     uint32_t xStart;
     uint32_t xEnd;
     uint32_t yStart;

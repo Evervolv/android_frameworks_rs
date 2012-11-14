@@ -25,6 +25,7 @@
 #include "rsdProgramFragment.h"
 #include "rsdMesh.h"
 #include "rsdSampler.h"
+#include "rsdScriptGroup.h"
 #include "rsdFrameBuffer.h"
 
 #include <malloc.h>
@@ -36,7 +37,6 @@
 #include <cutils/properties.h>
 #include <sys/syscall.h>
 #include <string.h>
-#include <bcc/bcc.h>
 
 using namespace android;
 using namespace android::renderscript;
@@ -55,6 +55,7 @@ static RsdHalFunctions FunctionTable = {
     SetPriority,
     {
         rsdScriptInit,
+        rsdInitIntrinsic,
         rsdScriptInvokeFunction,
         rsdScriptInvokeRoot,
         rsdScriptInvokeForEach,
@@ -80,11 +81,17 @@ static RsdHalFunctions FunctionTable = {
         rsdAllocationData1D,
         rsdAllocationData2D,
         rsdAllocationData3D,
+        rsdAllocationRead1D,
+        rsdAllocationRead2D,
+        rsdAllocationRead3D,
+        rsdAllocationLock1D,
+        rsdAllocationUnlock1D,
         rsdAllocationData1D_alloc,
         rsdAllocationData2D_alloc,
         rsdAllocationData3D_alloc,
         rsdAllocationElementData1D,
-        rsdAllocationElementData2D
+        rsdAllocationElementData2D,
+        rsdAllocationGenerateMipmaps
     },
 
 
@@ -135,6 +142,15 @@ static RsdHalFunctions FunctionTable = {
         rsdFrameBufferSetActive,
         rsdFrameBufferDestroy
     },
+
+    {
+        rsdScriptGroupInit,
+        rsdScriptGroupSetInput,
+        rsdScriptGroupSetOutput,
+        rsdScriptGroupExecute,
+        rsdScriptGroupDestroy
+    }
+
 
 };
 
@@ -197,7 +213,9 @@ void rsdLaunchThreads(Context *rsc, WorkerCallback_t cbk, void *data) {
     }
 }
 
-bool rsdHalInit(Context *rsc, uint32_t version_major, uint32_t version_minor) {
+extern "C" bool rsdHalInit(RsContext c, uint32_t version_major,
+                           uint32_t version_minor) {
+    Context *rsc = (Context*) c;
     rsc->mHal.funcs = FunctionTable;
 
     RsdHal *dc = (RsdHal *)calloc(1, sizeof(RsdHal));
@@ -228,7 +246,7 @@ bool rsdHalInit(Context *rsc, uint32_t version_major, uint32_t version_minor) {
 
 
     int cpu = sysconf(_SC_NPROCESSORS_ONLN);
-    if(rsc->props.mDebugMaxThreads && (cpu > (int)rsc->props.mDebugMaxThreads)) {
+    if(rsc->props.mDebugMaxThreads) {
         cpu = rsc->props.mDebugMaxThreads;
     }
     if (cpu < 2) {

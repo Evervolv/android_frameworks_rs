@@ -22,6 +22,7 @@
 
 #include "rsThreadIO.h"
 #include "rsScriptC.h"
+#include "rsScriptGroup.h"
 #include "rsSampler.h"
 #include "rsFont.h"
 #include "rsPath.h"
@@ -30,6 +31,7 @@
 #include "rsProgramRaster.h"
 #include "rsProgramVertex.h"
 #include "rsFBOCache.h"
+#include <string.h>
 
 // ---------------------------------------------------------------------------
 namespace android {

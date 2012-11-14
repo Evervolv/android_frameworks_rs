@@ -67,7 +67,7 @@ public:
 
     // Currently files do not get serialized,
     // but we need to inherit from ObjectBase for ref tracking
-    virtual void serialize(OStream *stream) const {
+    virtual void serialize(Context *rsc, OStream *stream) const {
     }
     virtual RsA3DClassID getClassId() const {
         return RS_A3D_CLASS_ID_UNKNOWN;
@@ -215,10 +215,11 @@ protected:
 
     // Texture to cache glyph bitmaps
     ObjectBaseRef<Allocation> mTextTexture;
+    uint8_t *mCacheBuffer;
+    uint32_t mCacheWidth;
+    uint32_t mCacheHeight;
+
     void initTextTexture();
-    const uint8_t* getTextTextureData() const {
-        return (uint8_t*)mTextTexture->getPtr();
-    }
 
 #ifndef ANDROID_RS_SERIALIZE
     bool cacheBitmap(FT_Bitmap_ *bitmap, uint32_t *retOriginX, uint32_t *retOriginY);

@@ -60,6 +60,7 @@ void Allocation::updateCache() {
     mHal.state.hasMipmaps = type->getDimLOD();
     mHal.state.elementSizeBytes = type->getElementSizeBytes();
     mHal.state.hasReferences = mHal.state.type->getElement()->getHasReferences();
+    mHal.state.eType = mHal.state.type->getElement()->getType();
 }
 
 Allocation::~Allocation() {
@@ -70,10 +71,6 @@ Allocation::~Allocation() {
 
 void Allocation::syncAll(Context *rsc, RsAllocationUsageType src) {
     rsc->mHal.funcs.allocation.syncAll(rsc, this, src);
-}
-
-void Allocation::read(void *data) {
-    memcpy(data, getPtr(), mHal.state.type->getSizeBytes());
 }
 
 void Allocation::data(Context *rsc, uint32_t xoff, uint32_t lod,
@@ -111,6 +108,39 @@ void Allocation::data(Context *rsc, uint32_t xoff, uint32_t yoff, uint32_t lod, 
 void Allocation::data(Context *rsc, uint32_t xoff, uint32_t yoff, uint32_t zoff,
                       uint32_t lod, RsAllocationCubemapFace face,
                       uint32_t w, uint32_t h, uint32_t d, const void *data, size_t sizeBytes) {
+}
+
+void Allocation::read(Context *rsc, uint32_t xoff, uint32_t lod,
+                         uint32_t count, void *data, size_t sizeBytes) {
+    const size_t eSize = mHal.state.type->getElementSizeBytes();
+
+    if ((count * eSize) != sizeBytes) {
+        ALOGE("Allocation::read called with mismatched size expected %zu, got %zu",
+             (count * eSize), sizeBytes);
+        mHal.state.type->dumpLOGV("type info");
+        return;
+    }
+
+    rsc->mHal.funcs.allocation.read1D(rsc, this, xoff, lod, count, data, sizeBytes);
+}
+
+void Allocation::read(Context *rsc, uint32_t xoff, uint32_t yoff, uint32_t lod, RsAllocationCubemapFace face,
+             uint32_t w, uint32_t h, void *data, size_t sizeBytes) {
+    const size_t eSize = mHal.state.elementSizeBytes;
+    const size_t lineSize = eSize * w;
+
+    if ((lineSize * h) != sizeBytes) {
+        ALOGE("Allocation size mismatch, expected %zu, got %zu", (lineSize * h), sizeBytes);
+        rsAssert(!"Allocation::read called with mismatched size");
+        return;
+    }
+
+    rsc->mHal.funcs.allocation.read2D(rsc, this, xoff, yoff, lod, face, w, h, data, sizeBytes);
+}
+
+void Allocation::read(Context *rsc, uint32_t xoff, uint32_t yoff, uint32_t zoff,
+                      uint32_t lod, RsAllocationCubemapFace face,
+                      uint32_t w, uint32_t h, uint32_t d, void *data, size_t sizeBytes) {
 }
 
 void Allocation::elementData(Context *rsc, uint32_t x, const void *data,
@@ -199,7 +229,7 @@ void Allocation::dumpLOGV(const char *prefix) const {
     }
 
     ALOGV("%s allocation ptr=%p  mUsageFlags=0x04%x, mMipmapControl=0x%04x",
-         prefix, getPtr(), mHal.state.usageFlags, mHal.state.mipmapControl);
+         prefix, mHal.drvState.mallocPtrLOD0, mHal.state.usageFlags, mHal.state.mipmapControl);
 }
 
 uint32_t Allocation::getPackedSize() const {
@@ -207,7 +237,7 @@ uint32_t Allocation::getPackedSize() const {
     return numItems * mHal.state.type->getElement()->getSizeBytesUnpadded();
 }
 
-void Allocation::writePackedData(const Type *type,
+void Allocation::writePackedData(Context *rsc, const Type *type,
                                  uint8_t *dst, const uint8_t *src, bool dstPadded) {
     const Element *elem = type->getElement();
     uint32_t unpaddedBytes = elem->getSizeBytesUnpadded();
@@ -256,28 +286,30 @@ void Allocation::writePackedData(const Type *type,
     delete[] sizeUnpadded;
 }
 
-void Allocation::unpackVec3Allocation(const void *data, size_t dataSize) {
+void Allocation::unpackVec3Allocation(Context *rsc, const void *data, size_t dataSize) {
     const uint8_t *src = (const uint8_t*)data;
-    uint8_t *dst = (uint8_t*)getPtr();
+    uint8_t *dst = (uint8_t *)rsc->mHal.funcs.allocation.lock1D(rsc, this);
 
-    writePackedData(getType(), dst, src, true);
+    writePackedData(rsc, getType(), dst, src, true);
+    rsc->mHal.funcs.allocation.unlock1D(rsc, this);
 }
 
-void Allocation::packVec3Allocation(OStream *stream) const {
+void Allocation::packVec3Allocation(Context *rsc, OStream *stream) const {
     uint32_t paddedBytes = getType()->getElement()->getSizeBytes();
     uint32_t unpaddedBytes = getType()->getElement()->getSizeBytesUnpadded();
     uint32_t numItems = mHal.state.type->getSizeBytes() / paddedBytes;
 
-    const uint8_t *src = (const uint8_t*)getPtr();
+    const uint8_t *src = (const uint8_t*)rsc->mHal.funcs.allocation.lock1D(rsc, this);
     uint8_t *dst = new uint8_t[numItems * unpaddedBytes];
 
-    writePackedData(getType(), dst, src, false);
+    writePackedData(rsc, getType(), dst, src, false);
     stream->addByteArray(dst, getPackedSize());
 
     delete[] dst;
+    rsc->mHal.funcs.allocation.unlock1D(rsc, this);
 }
 
-void Allocation::serialize(OStream *stream) const {
+void Allocation::serialize(Context *rsc, OStream *stream) const {
     // Need to identify ourselves
     stream->addU32((uint32_t)getClassId());
 
@@ -286,7 +318,7 @@ void Allocation::serialize(OStream *stream) const {
 
     // First thing we need to serialize is the type object since it will be needed
     // to initialize the class
-    mHal.state.type->serialize(stream);
+    mHal.state.type->serialize(rsc, stream);
 
     uint32_t dataSize = mHal.state.type->getSizeBytes();
     // 3 element vectors are padded to 4 in memory, but padding isn't serialized
@@ -295,10 +327,11 @@ void Allocation::serialize(OStream *stream) const {
     stream->addU32(packedSize);
     if (dataSize == packedSize) {
         // Now write the data
-        stream->addByteArray(getPtr(), dataSize);
+        stream->addByteArray(rsc->mHal.funcs.allocation.lock1D(rsc, this), dataSize);
+        rsc->mHal.funcs.allocation.unlock1D(rsc, this);
     } else {
         // Now write the data
-        packVec3Allocation(stream);
+        packVec3Allocation(rsc, stream);
     }
 }
 
@@ -341,7 +374,7 @@ Allocation *Allocation::createFromStream(Context *rsc, IStream *stream) {
         // Read in all of our allocation data
         alloc->data(rsc, 0, 0, count, stream->getPtr() + stream->getPos(), dataSize);
     } else {
-        alloc->unpackVec3Allocation(stream->getPtr() + stream->getPos(), dataSize);
+        alloc->unpackVec3Allocation(rsc, stream->getPtr() + stream->getPos(), dataSize);
     }
     stream->reset(stream->getPos() + dataSize);
 
@@ -367,7 +400,9 @@ void Allocation::decRefs(const void *ptr, size_t ct, size_t startOff) const {
 }
 
 void Allocation::freeChildrenUnlocked () {
-    decRefs(getPtr(), mHal.state.type->getSizeBytes() / mHal.state.type->getElementSizeBytes(), 0);
+    void *ptr = mRSC->mHal.funcs.allocation.lock1D(mRSC, this);
+    decRefs(ptr, mHal.state.type->getSizeBytes() / mHal.state.type->getElementSizeBytes(), 0);
+    mRSC->mHal.funcs.allocation.unlock1D(mRSC, this);
 }
 
 bool Allocation::freeChildren() {
@@ -390,7 +425,8 @@ void Allocation::resize1D(Context *rsc, uint32_t dimX) {
 
     ObjectBaseRef<Type> t = mHal.state.type->cloneAndResize1D(rsc, dimX);
     if (dimX < oldDimX) {
-        decRefs(getPtr(), oldDimX - dimX, dimX);
+        decRefs(rsc->mHal.funcs.allocation.lock1D(rsc, this), oldDimX - dimX, dimX);
+        rsc->mHal.funcs.allocation.unlock1D(rsc, this);
     }
     rsc->mHal.funcs.allocation.resize(rsc, this, t.get(), mHal.state.hasReferences);
     setType(t.get());
@@ -447,76 +483,6 @@ void Allocation::ioReceive(const Context *rsc) {
 namespace android {
 namespace renderscript {
 
-static void AllocationGenerateScriptMips(RsContext con, RsAllocation va);
-
-static void mip565(const Adapter2D &out, const Adapter2D &in) {
-    uint32_t w = out.getDimX();
-    uint32_t h = out.getDimY();
-
-    for (uint32_t y=0; y < h; y++) {
-        uint16_t *oPtr = static_cast<uint16_t *>(out.getElement(0, y));
-        const uint16_t *i1 = static_cast<uint16_t *>(in.getElement(0, y*2));
-        const uint16_t *i2 = static_cast<uint16_t *>(in.getElement(0, y*2+1));
-
-        for (uint32_t x=0; x < w; x++) {
-            *oPtr = rsBoxFilter565(i1[0], i1[1], i2[0], i2[1]);
-            oPtr ++;
-            i1 += 2;
-            i2 += 2;
-        }
-    }
-}
-
-static void mip8888(const Adapter2D &out, const Adapter2D &in) {
-    uint32_t w = out.getDimX();
-    uint32_t h = out.getDimY();
-
-    for (uint32_t y=0; y < h; y++) {
-        uint32_t *oPtr = static_cast<uint32_t *>(out.getElement(0, y));
-        const uint32_t *i1 = static_cast<uint32_t *>(in.getElement(0, y*2));
-        const uint32_t *i2 = static_cast<uint32_t *>(in.getElement(0, y*2+1));
-
-        for (uint32_t x=0; x < w; x++) {
-            *oPtr = rsBoxFilter8888(i1[0], i1[1], i2[0], i2[1]);
-            oPtr ++;
-            i1 += 2;
-            i2 += 2;
-        }
-    }
-}
-
-static void mip8(const Adapter2D &out, const Adapter2D &in) {
-    uint32_t w = out.getDimX();
-    uint32_t h = out.getDimY();
-
-    for (uint32_t y=0; y < h; y++) {
-        uint8_t *oPtr = static_cast<uint8_t *>(out.getElement(0, y));
-        const uint8_t *i1 = static_cast<uint8_t *>(in.getElement(0, y*2));
-        const uint8_t *i2 = static_cast<uint8_t *>(in.getElement(0, y*2+1));
-
-        for (uint32_t x=0; x < w; x++) {
-            *oPtr = (uint8_t)(((uint32_t)i1[0] + i1[1] + i2[0] + i2[1]) * 0.25f);
-            oPtr ++;
-            i1 += 2;
-            i2 += 2;
-        }
-    }
-}
-
-static void mip(const Adapter2D &out, const Adapter2D &in) {
-    switch (out.getBaseType()->getElement()->getSizeBits()) {
-    case 32:
-        mip8888(out, in);
-        break;
-    case 16:
-        mip565(out, in);
-        break;
-    case 8:
-        mip8(out, in);
-        break;
-    }
-}
-
 void rsi_AllocationSyncAll(Context *rsc, RsAllocation va, RsAllocationUsageType src) {
     Allocation *a = static_cast<Allocation *>(va);
     a->sendDirty(rsc);
@@ -524,21 +490,15 @@ void rsi_AllocationSyncAll(Context *rsc, RsAllocation va, RsAllocationUsageType 
 }
 
 void rsi_AllocationGenerateMipmaps(Context *rsc, RsAllocation va) {
-    Allocation *texAlloc = static_cast<Allocation *>(va);
-    AllocationGenerateScriptMips(rsc, texAlloc);
+    Allocation *alloc = static_cast<Allocation *>(va);
+    rsc->mHal.funcs.allocation.generateMipmaps(rsc, alloc);
 }
 
-void rsi_AllocationCopyToBitmap(Context *rsc, RsAllocation va, void *data, size_t dataLen) {
-    Allocation *texAlloc = static_cast<Allocation *>(va);
-    const Type * t = texAlloc->getType();
-
-    size_t s = t->getDimX() * t->getDimY() * t->getElementSizeBytes();
-    if (s != dataLen) {
-        rsc->setError(RS_ERROR_BAD_VALUE, "Bitmap size didn't match allocation size");
-        return;
-    }
-
-    memcpy(data, texAlloc->getPtr(), s);
+void rsi_AllocationCopyToBitmap(Context *rsc, RsAllocation va, void *data, size_t sizeBytes) {
+    Allocation *a = static_cast<Allocation *>(va);
+    const Type * t = a->getType();
+    a->read(rsc, 0, 0, 0, RS_ALLOCATION_CUBEMAP_FACE_POSITIVE_X,
+            t->getDimX(), t->getDimY(), data, sizeBytes);
 }
 
 void rsi_Allocation1DData(Context *rsc, RsAllocation va, uint32_t xoff, uint32_t lod,
@@ -565,9 +525,16 @@ void rsi_Allocation2DData(Context *rsc, RsAllocation va, uint32_t xoff, uint32_t
     a->data(rsc, xoff, yoff, lod, face, w, h, data, sizeBytes);
 }
 
-void rsi_AllocationRead(Context *rsc, RsAllocation va, void *data, size_t data_length) {
+void rsi_AllocationRead(Context *rsc, RsAllocation va, void *data, size_t sizeBytes) {
     Allocation *a = static_cast<Allocation *>(va);
-    a->read(data);
+    const Type * t = a->getType();
+    if(t->getDimY()) {
+        a->read(rsc, 0, 0, 0, RS_ALLOCATION_CUBEMAP_FACE_POSITIVE_X,
+                t->getDimX(), t->getDimY(), data, sizeBytes);
+    } else {
+        a->read(rsc, 0, 0, t->getDimX(), data, sizeBytes);
+    }
+
 }
 
 void rsi_AllocationResize1D(Context *rsc, RsAllocation va, uint32_t dimX) {
@@ -578,23 +545,6 @@ void rsi_AllocationResize1D(Context *rsc, RsAllocation va, uint32_t dimX) {
 void rsi_AllocationResize2D(Context *rsc, RsAllocation va, uint32_t dimX, uint32_t dimY) {
     Allocation *a = static_cast<Allocation *>(va);
     a->resize2D(rsc, dimX, dimY);
-}
-
-static void AllocationGenerateScriptMips(RsContext con, RsAllocation va) {
-    Context *rsc = static_cast<Context *>(con);
-    Allocation *texAlloc = static_cast<Allocation *>(va);
-    uint32_t numFaces = texAlloc->getType()->getDimFaces() ? 6 : 1;
-    for (uint32_t face = 0; face < numFaces; face ++) {
-        Adapter2D adapt(rsc, texAlloc);
-        Adapter2D adapt2(rsc, texAlloc);
-        adapt.setFace(face);
-        adapt2.setFace(face);
-        for (uint32_t lod=0; lod < (texAlloc->getType()->getLODCount() -1); lod++) {
-            adapt.setLOD(lod);
-            adapt2.setLOD(lod + 1);
-            mip(adapt2, adapt);
-        }
-    }
 }
 
 RsAllocation rsi_AllocationCreateTyped(Context *rsc, RsType vtype,
@@ -610,7 +560,7 @@ RsAllocation rsi_AllocationCreateTyped(Context *rsc, RsType vtype,
 
 RsAllocation rsi_AllocationCreateFromBitmap(Context *rsc, RsType vtype,
                                             RsAllocationMipmapControl mips,
-                                            const void *data, size_t data_length, uint32_t usages) {
+                                            const void *data, size_t sizeBytes, uint32_t usages) {
     Type *t = static_cast<Type *>(vtype);
 
     RsAllocation vTexAlloc = rsi_AllocationCreateTyped(rsc, vtype, mips, usages, 0);
@@ -620,9 +570,10 @@ RsAllocation rsi_AllocationCreateFromBitmap(Context *rsc, RsType vtype,
         return NULL;
     }
 
-    memcpy(texAlloc->getPtr(), data, t->getDimX() * t->getDimY() * t->getElementSizeBytes());
+    texAlloc->data(rsc, 0, 0, 0, RS_ALLOCATION_CUBEMAP_FACE_POSITIVE_X,
+                   t->getDimX(), t->getDimY(), data, sizeBytes);
     if (mips == RS_ALLOCATION_MIPMAP_FULL) {
-        AllocationGenerateScriptMips(rsc, texAlloc);
+        rsc->mHal.funcs.allocation.generateMipmaps(rsc, texAlloc);
     }
 
     texAlloc->sendDirty(rsc);
@@ -631,7 +582,7 @@ RsAllocation rsi_AllocationCreateFromBitmap(Context *rsc, RsType vtype,
 
 RsAllocation rsi_AllocationCubeCreateFromBitmap(Context *rsc, RsType vtype,
                                                 RsAllocationMipmapControl mips,
-                                                const void *data, size_t data_length, uint32_t usages) {
+                                                const void *data, size_t sizeBytes, uint32_t usages) {
     Type *t = static_cast<Type *>(vtype);
 
     // Cubemap allocation's faces should be Width by Width each.
@@ -650,11 +601,9 @@ RsAllocation rsi_AllocationCubeCreateFromBitmap(Context *rsc, RsType vtype,
 
     uint8_t *sourcePtr = (uint8_t*)data;
     for (uint32_t face = 0; face < 6; face ++) {
-        Adapter2D faceAdapter(rsc, texAlloc);
-        faceAdapter.setFace(face);
-
         for (uint32_t dI = 0; dI < faceSize; dI ++) {
-            memcpy(faceAdapter.getElement(0, dI), sourcePtr + strideBytes * dI, copySize);
+            texAlloc->data(rsc, 0, dI, 0, (RsAllocationCubemapFace)face,
+                           t->getDimX(), 1, sourcePtr + strideBytes * dI, copySize);
         }
 
         // Move the data pointer to the next cube face
@@ -662,7 +611,7 @@ RsAllocation rsi_AllocationCubeCreateFromBitmap(Context *rsc, RsType vtype,
     }
 
     if (mips == RS_ALLOCATION_MIPMAP_FULL) {
-        AllocationGenerateScriptMips(rsc, texAlloc);
+        rsc->mHal.funcs.allocation.generateMipmaps(rsc, texAlloc);
     }
 
     texAlloc->sendDirty(rsc);

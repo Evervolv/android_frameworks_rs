@@ -24,6 +24,8 @@
 #include <bcinfo/BitcodeWrapper.h>
 #endif
 
+#include <sys/stat.h>
+
 using namespace android;
 using namespace android::renderscript;
 
@@ -51,6 +53,43 @@ ScriptC::~ScriptC() {
     }
 }
 
+bool ScriptC::createCacheDir(const char *cacheDir) {
+    String8 cacheDirString, currentDir;
+    struct stat statBuf;
+    int statReturn = stat(cacheDir, &statBuf);
+    if (!statReturn) {
+        return true;
+    }
+
+    // String8 path functions strip leading /'s
+    // insert if necessary
+    if (cacheDir[0] == '/') {
+        currentDir += "/";
+    }
+
+    cacheDirString.setPathName(cacheDir);
+
+    while (cacheDirString.length()) {
+        currentDir += (cacheDirString.walkPath(&cacheDirString));
+        statReturn = stat(currentDir.string(), &statBuf);
+        if (statReturn) {
+            if (errno == ENOENT) {
+                if (mkdir(currentDir.string(), S_IRUSR | S_IWUSR | S_IXUSR)) {
+                    ALOGE("Couldn't create cache directory: %s",
+                          currentDir.string());
+                    ALOGE("Error: %s", strerror(errno));
+                    return false;
+                }
+            } else {
+                ALOGE("Stat error: %s", strerror(errno));
+                return false;
+            }
+        }
+        currentDir += "/";
+    }
+    return true;
+}
+
 void ScriptC::setupScript(Context *rsc) {
     mEnviroment.mStartTimeMillis
                 = nanoseconds_to_milliseconds(systemTime(SYSTEM_TIME_MONOTONIC));
@@ -62,29 +101,8 @@ void ScriptC::setupScript(Context *rsc) {
 
         if (!mTypes[ct].get())
             continue;
-        void *ptr = NULL;
-        if (mSlots[ct].get()) {
-            ptr = mSlots[ct]->getPtr();
-        }
-
-        rsc->mHal.funcs.script.setGlobalBind(rsc, this, ct, ptr);
+        rsc->mHal.funcs.script.setGlobalBind(rsc, this, ct, mSlots[ct].get());
     }
-}
-
-const Allocation *ScriptC::ptrToAllocation(const void *ptr) const {
-    //ALOGE("ptr to alloc %p", ptr);
-    if (!ptr) {
-        return NULL;
-    }
-    for (uint32_t ct=0; ct < mHal.info.exportedVariableCount; ct++) {
-        if (!mSlots[ct].get())
-            continue;
-        if (mSlots[ct]->getPtr() == ptr) {
-            return mSlots[ct].get();
-        }
-    }
-    ALOGE("ScriptC::ptrToAllocation, failed to find %p", ptr);
-    return NULL;
 }
 
 void ScriptC::setupGLState(Context *rsc) {
@@ -231,6 +249,11 @@ bool ScriptC::runCompiler(Context *rsc,
     bitcode = (const uint8_t *) BT->getTranslatedBitcode();
     bitcodeLen = BT->getTranslatedBitcodeSize();
 #endif
+
+    // ensure that cache dir exists
+    if (!createCacheDir(cacheDir)) {
+      return false;
+    }
 
     if (!rsc->mHal.funcs.script.init(rsc, this, resName, cacheDir, bitcode, bitcodeLen, 0)) {
         return false;

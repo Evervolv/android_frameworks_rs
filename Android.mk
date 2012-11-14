@@ -2,14 +2,16 @@
 LOCAL_PATH:=$(call my-dir)
 
 rs_base_CFLAGS := -Werror -Wall -Wno-unused-parameter -Wno-unused-variable
-ifeq ($(ARCH_ARM_HAVE_NEON), true)
-  rs_base_CFLAGS += -DARCH_ARM_HAVE_NEON
-endif
 ifeq ($(TARGET_BUILD_PDK), true)
   rs_base_CFLAGS += -D__RS_PDK__
 endif
 
+ifneq ($(OVERRIDE_RS_DRIVER),)
+  rs_base_CFLAGS += -DOVERRIDE_RS_DRIVER=$(OVERRIDE_RS_DRIVER)
+endif
+
 include $(CLEAR_VARS)
+LOCAL_CLANG := true
 LOCAL_MODULE := libRSDriver
 
 LOCAL_SRC_FILES:= \
@@ -19,6 +21,14 @@ LOCAL_SRC_FILES:= \
 	driver/rsdFrameBuffer.cpp \
 	driver/rsdFrameBufferObj.cpp \
 	driver/rsdGL.cpp \
+	driver/rsdIntrinsics.cpp \
+	driver/rsdIntrinsicBlend.cpp \
+	driver/rsdIntrinsicBlur.cpp \
+	driver/rsdIntrinsicConvolve3x3.cpp \
+	driver/rsdIntrinsicConvolve5x5.cpp \
+	driver/rsdIntrinsicLUT.cpp \
+	driver/rsdIntrinsicColorMatrix.cpp \
+	driver/rsdIntrinsicYuvToRGB.cpp \
 	driver/rsdMesh.cpp \
 	driver/rsdMeshObj.cpp \
 	driver/rsdPath.cpp \
@@ -28,12 +38,20 @@ LOCAL_SRC_FILES:= \
 	driver/rsdRuntimeMath.cpp \
 	driver/rsdRuntimeStubs.cpp \
 	driver/rsdSampler.cpp \
+	driver/rsdScriptGroup.cpp \
 	driver/rsdShader.cpp \
 	driver/rsdShaderCache.cpp \
 	driver/rsdVertexArray.cpp
 
+ifeq ($(ARCH_ARM_HAVE_NEON),true)
+    LOCAL_CFLAGS += -DARCH_ARM_HAVE_NEON
+    LOCAL_SRC_FILES+= \
+        driver/rsdIntrinsics_Convolve.S
+endif
+
+LOCAL_SHARED_LIBRARIES += libRS
 LOCAL_SHARED_LIBRARIES += libcutils libutils libEGL libGLESv1_CM libGLESv2
-LOCAL_SHARED_LIBRARIES += libbcc libbcinfo libgui
+LOCAL_SHARED_LIBRARIES += libbcc libbcinfo libui libgui libsync
 
 LOCAL_C_INCLUDES += frameworks/compile/libbcc/include
 
@@ -42,7 +60,7 @@ LOCAL_CFLAGS += $(rs_base_CFLAGS)
 LOCAL_LDLIBS := -lpthread -ldl
 LOCAL_MODULE_TAGS := optional
 
-include $(BUILD_STATIC_LIBRARY)
+include $(BUILD_SHARED_LIBRARY)
 
 # Build rsg-generator ====================
 include $(CLEAR_VARS)
@@ -66,6 +84,7 @@ include $(BUILD_HOST_EXECUTABLE)
 RSG_GENERATOR:=$(LOCAL_BUILT_MODULE)
 
 include $(CLEAR_VARS)
+LOCAL_CLANG := true
 LOCAL_MODULE := libRS
 
 LOCAL_MODULE_CLASS := SHARED_LIBRARIES
@@ -135,15 +154,17 @@ LOCAL_SRC_FILES:= \
 	rsScriptC.cpp \
 	rsScriptC_Lib.cpp \
 	rsScriptC_LibGL.cpp \
+	rsScriptGroup.cpp \
+	rsScriptIntrinsic.cpp \
 	rsSignal.cpp \
 	rsStream.cpp \
 	rsThreadIO.cpp \
 	rsType.cpp
 
 LOCAL_SHARED_LIBRARIES += libcutils libutils libEGL libGLESv1_CM libGLESv2 libbcc
-LOCAL_SHARED_LIBRARIES += libui libbcinfo libgui
+LOCAL_SHARED_LIBRARIES += libui libbcinfo libgui libsync libdl
 
-LOCAL_STATIC_LIBRARIES := libft2 libRSDriver
+LOCAL_STATIC_LIBRARIES := libft2
 
 LOCAL_C_INCLUDES += external/freetype/include
 LOCAL_C_INCLUDES += frameworks/compile/libbcc/include
@@ -151,7 +172,6 @@ LOCAL_C_INCLUDES += frameworks/compile/libbcc/include
 LOCAL_CFLAGS += $(rs_base_CFLAGS)
 
 LOCAL_LDLIBS := -lpthread -ldl
-LOCAL_MODULE:= libRS
 LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
@@ -226,6 +246,8 @@ LOCAL_SRC_FILES:= \
 	rsScriptC.cpp \
 	rsScriptC_Lib.cpp \
 	rsScriptC_LibGL.cpp \
+	rsScriptGroup.cpp \
+	rsScriptIntrinsic.cpp \
 	rsSignal.cpp \
 	rsStream.cpp \
 	rsThreadIO.cpp \

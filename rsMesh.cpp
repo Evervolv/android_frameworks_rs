@@ -78,7 +78,7 @@ void Mesh::init() {
 #endif
 }
 
-void Mesh::serialize(OStream *stream) const {
+void Mesh::serialize(Context *rsc, OStream *stream) const {
     // Need to identify ourselves
     stream->addU32((uint32_t)getClassId());
 
@@ -88,7 +88,7 @@ void Mesh::serialize(OStream *stream) const {
     // Store number of vertex streams
     stream->addU32(mHal.state.vertexBuffersCount);
     for (uint32_t vCount = 0; vCount < mHal.state.vertexBuffersCount; vCount ++) {
-        mHal.state.vertexBuffers[vCount]->serialize(stream);
+        mHal.state.vertexBuffers[vCount]->serialize(rsc, stream);
     }
 
     stream->addU32(mHal.state.primitivesCount);
@@ -98,7 +98,7 @@ void Mesh::serialize(OStream *stream) const {
 
         if (mHal.state.indexBuffers[pCount]) {
             stream->addU32(1);
-            mHal.state.indexBuffers[pCount]->serialize(stream);
+            mHal.state.indexBuffers[pCount]->serialize(rsc, stream);
         } else {
             stream->addU32(0);
         }
@@ -215,11 +215,12 @@ void Mesh::uploadAll(Context *rsc) {
     }
 }
 
-void Mesh::computeBBox() {
+void Mesh::computeBBox(Context *rsc) {
     float *posPtr = NULL;
     uint32_t vectorSize = 0;
     uint32_t stride = 0;
     uint32_t numVerts = 0;
+    Allocation *posAlloc = NULL;
     // First we need to find the position ptr and stride
     for (uint32_t ct=0; ct < mHal.state.vertexBuffersCount; ct++) {
         const Type *bufferType = mHal.state.vertexBuffers[ct]->getType();
@@ -230,7 +231,10 @@ void Mesh::computeBBox() {
                 vectorSize = bufferElem->getField(ct)->getComponent().getVectorSize();
                 stride = bufferElem->getSizeBytes() / sizeof(float);
                 uint32_t offset = bufferElem->getFieldOffsetBytes(ct);
-                posPtr = (float*)((uint8_t*)mHal.state.vertexBuffers[ct]->getPtr() + offset);
+                posAlloc = mHal.state.vertexBuffers[ct];
+                const uint8_t *bp = (const uint8_t *)rsc->mHal.funcs.allocation.lock1D(
+                        rsc, posAlloc);
+                posPtr = (float*)(bp + offset);
                 numVerts = bufferType->getDimX();
                 break;
             }
@@ -255,6 +259,10 @@ void Mesh::computeBBox() {
             mBBoxMax[v] = rsMax(mBBoxMax[v], posPtr[v]);
         }
         posPtr += stride;
+    }
+
+    if (posAlloc) {
+        rsc->mHal.funcs.allocation.unlock1D(rsc, posAlloc);
     }
 }
 

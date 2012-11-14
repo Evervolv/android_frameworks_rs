@@ -29,7 +29,8 @@
 #include <cutils/properties.h>
 
 #include <sys/syscall.h>
-#include <string.h>
+
+#include <dlfcn.h>
 
 using namespace android;
 using namespace android::renderscript;
@@ -77,7 +78,7 @@ Context::PushState::~PushState() {
 
 
 uint32_t Context::runScript(Script *s) {
-    PushState(this);
+    PushState ps(this);
 
     uint32_t ret = s->run(this);
     return ret;
@@ -220,8 +221,60 @@ void * Context::threadProc(void *vrsc) {
     rsc->props.mLogVisual = getProp("debug.rs.visual") != 0;
     rsc->props.mDebugMaxThreads = getProp("debug.rs.max-threads");
 
-    if (!rsdHalInit(rsc, 0, 0)) {
-        rsc->setError(RS_ERROR_FATAL_DRIVER, "Failed initializing GL");
+    void *driverSO = NULL;
+
+    // Provide a mechanism for dropping in a different RS driver.
+#ifdef OVERRIDE_RS_DRIVER
+#define XSTR(S) #S
+#define STR(S) XSTR(S)
+#define OVERRIDE_RS_DRIVER_STRING STR(OVERRIDE_RS_DRIVER)
+    if (getProp("debug.rs.default-CPU-driver") != 0) {
+        ALOGE("Skipping override driver and loading default CPU driver");
+    } else {
+        driverSO = dlopen(OVERRIDE_RS_DRIVER_STRING, RTLD_LAZY);
+        if (driverSO == NULL) {
+            ALOGE("Failed loading %s: %s", OVERRIDE_RS_DRIVER_STRING,
+                  dlerror());
+            // Continue to attempt loading fallback driver
+        }
+    }
+
+#undef XSTR
+#undef STR
+#endif  // OVERRIDE_RS_DRIVER
+
+    // Attempt to load the reference RS driver (if necessary).
+    if (driverSO == NULL) {
+        driverSO = dlopen("libRSDriver.so", RTLD_LAZY);
+        if (driverSO == NULL) {
+            rsc->setError(RS_ERROR_FATAL_DRIVER, "Failed loading RS driver");
+            ALOGE("Failed loading RS driver: %s", dlerror());
+            return NULL;
+        }
+    }
+
+    // Need to call dlerror() to clear buffer before using it for dlsym().
+    (void) dlerror();
+    typedef bool (*HalSig)(Context*, uint32_t, uint32_t);
+    HalSig halInit = (HalSig) dlsym(driverSO, "rsdHalInit");
+
+    // If we can't find the C variant, we go looking for the C++ version.
+    if (halInit == NULL) {
+        ALOGW("Falling back to find C++ rsdHalInit: %s", dlerror());
+        halInit = (HalSig) dlsym(driverSO,
+                "_Z10rsdHalInitPN7android12renderscript7ContextEjj");
+    }
+
+    if (halInit == NULL) {
+        rsc->setError(RS_ERROR_FATAL_DRIVER, "Failed to find rsdHalInit");
+        dlclose(driverSO);
+        ALOGE("Failed to find rsdHalInit: %s", dlerror());
+        return NULL;
+    }
+
+    if (!(*halInit)(rsc, 0, 0)) {
+        rsc->setError(RS_ERROR_FATAL_DRIVER, "Failed initializing RS Driver");
+        dlclose(driverSO);
         ALOGE("Hal init failed");
         return NULL;
     }

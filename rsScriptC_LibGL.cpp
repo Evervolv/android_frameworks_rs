@@ -147,72 +147,6 @@ void rsrVpGetProjectionMatrix(Context *rsc, Script *sc, rsc_Matrix *m) {
 // Drawing
 //////////////////////////////////////////////////////////////////////////////
 
-void rsrDrawQuadTexCoords(Context *rsc, Script *sc,
-                          float x1, float y1, float z1, float u1, float v1,
-                          float x2, float y2, float z2, float u2, float v2,
-                          float x3, float y3, float z3, float u3, float v3,
-                          float x4, float y4, float z4, float u4, float v4) {
-    if (!rsc->setupCheck()) {
-        return;
-    }
-
-    RsdHal *dc = (RsdHal *)rsc->mHal.drv;
-    if (!dc->gl.shaderCache->setup(rsc)) {
-        return;
-    }
-
-    //ALOGE("Quad");
-    //ALOGE("%4.2f, %4.2f, %4.2f", x1, y1, z1);
-    //ALOGE("%4.2f, %4.2f, %4.2f", x2, y2, z2);
-    //ALOGE("%4.2f, %4.2f, %4.2f", x3, y3, z3);
-    //ALOGE("%4.2f, %4.2f, %4.2f", x4, y4, z4);
-
-    float vtx[] = {x1,y1,z1, x2,y2,z2, x3,y3,z3, x4,y4,z4};
-    const float tex[] = {u1,v1, u2,v2, u3,v3, u4,v4};
-
-    RsdVertexArray::Attrib attribs[2];
-    attribs[0].set(GL_FLOAT, 3, 12, false, (uint32_t)vtx, "ATTRIB_position");
-    attribs[1].set(GL_FLOAT, 2, 8, false, (uint32_t)tex, "ATTRIB_texture0");
-
-    RsdVertexArray va(attribs, 2);
-    va.setup(rsc);
-
-    RSD_CALL_GL(glDrawArrays, GL_TRIANGLE_FAN, 0, 4);
-}
-
-void rsrDrawQuad(Context *rsc, Script *sc,
-                 float x1, float y1, float z1,
-                 float x2, float y2, float z2,
-                 float x3, float y3, float z3,
-                 float x4, float y4, float z4) {
-    rsrDrawQuadTexCoords(rsc, sc, x1, y1, z1, 0, 1,
-                                  x2, y2, z2, 1, 1,
-                                  x3, y3, z3, 1, 0,
-                                  x4, y4, z4, 0, 0);
-}
-
-void rsrDrawSpriteScreenspace(Context *rsc, Script *sc,
-                              float x, float y, float z, float w, float h) {
-    ObjectBaseRef<const ProgramVertex> tmp(rsc->getProgramVertex());
-    rsc->setProgramVertex(rsc->getDefaultProgramVertex());
-    //rsc->setupCheck();
-
-    //GLint crop[4] = {0, h, w, -h};
-
-    float sh = rsc->getHeight();
-
-    rsrDrawQuad(rsc, sc,
-                x,   sh - y,     z,
-                x+w, sh - y,     z,
-                x+w, sh - (y+h), z,
-                x,   sh - (y+h), z);
-    rsc->setProgramVertex((ProgramVertex *)tmp.get());
-}
-
-void rsrDrawRect(Context *rsc, Script *sc, float x1, float y1, float x2, float y2, float z) {
-    //ALOGE("SC_drawRect %f,%f  %f,%f  %f", x1, y1, x2, y2, z);
-    rsrDrawQuad(rsc, sc, x1, y2, z, x2, y2, z, x2, y1, z, x1, y1, z);
-}
 
 void rsrDrawPath(Context *rsc, Script *sc, Path *sm) {
     CHECK_OBJ(sm);
@@ -251,7 +185,7 @@ void rsrMeshComputeBoundingBox(Context *rsc, Script *sc, Mesh *sm,
                                float *minX, float *minY, float *minZ,
                                float *maxX, float *maxY, float *maxZ) {
     CHECK_OBJ(sm);
-    sm->computeBBox();
+    sm->computeBBox(rsc);
     *minX = sm->mBBoxMin[0];
     *minY = sm->mBBoxMin[1];
     *minZ = sm->mBBoxMin[2];
@@ -285,9 +219,10 @@ uint32_t rsrGetHeight(Context *rsc, Script *sc) {
 }
 
 void rsrDrawTextAlloc(Context *rsc, Script *sc, Allocation *a, int x, int y) {
-    const char *text = (const char *)a->getPtr();
+    const char *text = (const char *)rsc->mHal.funcs.allocation.lock1D(rsc, a);
     size_t allocSize = a->getType()->getSizeBytes();
     rsc->mStateFont.renderText(text, allocSize, x, y);
+    rsc->mHal.funcs.allocation.unlock1D(rsc, a);
 }
 
 void rsrDrawText(Context *rsc, Script *sc, const char *text, int x, int y) {
@@ -314,11 +249,12 @@ static void SetMetrics(Font::Rect *metrics,
 void rsrMeasureTextAlloc(Context *rsc, Script *sc, Allocation *a,
                          int32_t *left, int32_t *right, int32_t *top, int32_t *bottom) {
     CHECK_OBJ(a);
-    const char *text = (const char *)a->getPtr();
+    const char *text = (const char *)rsc->mHal.funcs.allocation.lock1D(rsc, a);
     size_t textLen = a->getType()->getSizeBytes();
     Font::Rect metrics;
     rsc->mStateFont.measureText(text, textLen, &metrics);
     SetMetrics(&metrics, left, right, top, bottom);
+    rsc->mHal.funcs.allocation.unlock1D(rsc, a);
 }
 
 void rsrMeasureText(Context *rsc, Script *sc, const char *text,

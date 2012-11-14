@@ -30,7 +30,11 @@ class Element;
 class Type;
 class Allocation;
 class Script;
+class ScriptKernelID;
+class ScriptFieldID;
+class ScriptMethodID;
 class ScriptC;
+class ScriptGroup;
 class Path;
 class Program;
 class ProgramStore;
@@ -47,13 +51,26 @@ typedef struct {
     const void *in;
     void *out;
     const void *usr;
-    size_t usr_len;
+    size_t usrLen;
     uint32_t x;
     uint32_t y;
     uint32_t z;
     uint32_t lod;
     RsAllocationCubemapFace face;
     uint32_t ar[16];
+
+    uint32_t dimX;
+    uint32_t dimY;
+    uint32_t dimZ;
+    uint32_t dimArray;
+
+    const uint8_t *ptrIn;
+    uint8_t *ptrOut;
+    uint32_t eStrideIn;
+    uint32_t eStrideOut;
+    uint32_t yStrideIn;
+    uint32_t yStrideOut;
+    uint32_t slot;
 } RsForEachStubParamStruct;
 
 /**
@@ -78,6 +95,9 @@ typedef struct {
                      uint8_t const *bitcode,
                      size_t bitcodeSize,
                      uint32_t flags);
+        bool (*initIntrinsic)(const Context *rsc, Script *s,
+                              RsScriptIntrinsicID iid,
+                              Element *e);
 
         void (*invokeFunction)(const Context *rsc, Script *s,
                                uint32_t slot,
@@ -108,7 +128,7 @@ typedef struct {
                                          size_t dimLength);
         void (*setGlobalBind)(const Context *rsc, const Script *s,
                               uint32_t slot,
-                              void *data);
+                              Allocation *data);
         void (*setGlobalObj)(const Context *rsc, const Script *s,
                              uint32_t slot,
                              ObjectBase *data);
@@ -142,6 +162,24 @@ typedef struct {
                        uint32_t lod, RsAllocationCubemapFace face,
                        uint32_t w, uint32_t h, uint32_t d, const void *data, size_t sizeBytes);
 
+        void (*read1D)(const Context *rsc, const Allocation *alloc,
+                       uint32_t xoff, uint32_t lod, uint32_t count,
+                       void *data, size_t sizeBytes);
+        void (*read2D)(const Context *rsc, const Allocation *alloc,
+                       uint32_t xoff, uint32_t yoff, uint32_t lod,
+                       RsAllocationCubemapFace face, uint32_t w, uint32_t h,
+                       void *data, size_t sizeBytes);
+        void (*read3D)(const Context *rsc, const Allocation *alloc,
+                       uint32_t xoff, uint32_t yoff, uint32_t zoff,
+                       uint32_t lod, RsAllocationCubemapFace face,
+                       uint32_t w, uint32_t h, uint32_t d, void *data, size_t sizeBytes);
+
+        // Lock and unlock make a 1D region of memory available to the CPU
+        // for direct access by pointer.  Once unlock is called control is
+        // returned to the SOC driver.
+        void * (*lock1D)(const Context *rsc, const Allocation *alloc);
+        void (*unlock1D)(const Context *rsc, const Allocation *alloc);
+
         // Allocation to allocation copies
         void (*allocData1D)(const Context *rsc,
                             const Allocation *dstAlloc,
@@ -168,7 +206,7 @@ typedef struct {
         void (*elementData2D)(const Context *rsc, const Allocation *alloc, uint32_t x, uint32_t y,
                               const void *data, uint32_t elementOff, size_t sizeBytes);
 
-
+        void (*generateMipmaps)(const Context *rsc, const Allocation *alloc);
     } allocation;
 
     struct {
@@ -225,14 +263,31 @@ typedef struct {
         void (*destroy)(const Context *rsc, const FBOCache *fb);
     } framebuffer;
 
+    struct {
+        bool (*init)(const Context *rsc, const ScriptGroup *sg);
+        void (*setInput)(const Context *rsc, const ScriptGroup *sg,
+                         const ScriptKernelID *kid, Allocation *);
+        void (*setOutput)(const Context *rsc, const ScriptGroup *sg,
+                          const ScriptKernelID *kid, Allocation *);
+        void (*execute)(const Context *rsc, const ScriptGroup *sg);
+        void (*destroy)(const Context *rsc, const ScriptGroup *sg);
+    } scriptgroup;
+
 } RsdHalFunctions;
 
 
 }
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-bool rsdHalInit(android::renderscript::Context *, uint32_t version_major, uint32_t version_minor);
+bool rsdHalInit(RsContext, uint32_t version_major, uint32_t version_minor);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 
